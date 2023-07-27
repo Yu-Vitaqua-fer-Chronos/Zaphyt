@@ -8,7 +8,7 @@ import ./[
 
 let code = newStringStream """
 stdout.writeln "Hello, ", "World!"
-stdout.write("1 + 1 = ", 1 + 1)
+stdout.write("1 + 1 = ", 1.uint8 + 1)
 """
 
 var l = Lexer.new(code)

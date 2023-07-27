@@ -1,4 +1,5 @@
 import std/[
+  strutils,
   streams
 ]
 
@@ -61,12 +62,47 @@ proc lexStr(l: var Lexer): Token =
       break
 
 
+proc lexNum(l: var Lexer): Token =
+  result.value &= l.peek()
+  l.next()
+
+  result.startLine = l.line
+  result.startColumn = l.column
+
+  var dotCount: uint8 = 0
+
+  while not l.atEnd:
+    let c = l.peek()
+
+    l.next()
+
+    if (dotCount == 1) and (c == '.'):
+      break
+
+    elif c == '.':
+      inc dotCount
+
+    elif (c in Whitespace) and (not c.isDigit):
+      break
+
+    result.value &= c
+
+  if '.' in result.value:
+    result.typ = Float
+
+  else:
+    result.typ = Int
+
+
 proc lex*(l: var Lexer): seq[Token] =
   while not l.atEnd():
     let cchar = l.peek()
 
     if cchar == '"':
       result.add l.lexStr()
+
+    elif cchar.isDigit():
+      result.add l.lexNum()
 
     else:
       l.next()
