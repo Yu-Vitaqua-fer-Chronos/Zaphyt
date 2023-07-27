@@ -13,4 +13,10 @@ stdout.write("1 + 1 = ", 1.uint8 + 1)
 
 var l = Lexer.new(code)
 
-echo l.lex()
+#echo l.lex()
+var codes = ""
+
+for t in l.lex():
+  codes &= t.value
+
+echo codes
