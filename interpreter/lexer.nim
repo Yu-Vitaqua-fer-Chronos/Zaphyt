@@ -3,12 +3,16 @@ import std/[
   streams
 ]
 
-const Unidentifiers = ".,()[]{}"
+const Unidentifiers = ".,()[]{}\"'"
+const Keywords = @[
+  "func"
+]
 
 type
   TokenType* = enum
     OpenParen, CloseParen, OpenBrace, CloseBrace, OpenBracket, CloseBracket
-    Identifier, String, Char, Int, Float, Comma, Dot, Semicolon, EOF
+    Identifier, Keyword, String, Char, Int, Float, Comma, Dot, Semicolon, EOF
+    # Here we have a way to tell the difference between a keyword and identifer to make lexing and parsing less hellish
 
   Token* = object
     typ*: TokenType
@@ -127,6 +131,9 @@ proc lexIdent(l: var Lexer): Token =
       cchar = l.peek()
 
       if (cchar in Whitespace) or (cchar in Unidentifiers):
+        if result.value in Keywords:
+          result.typ = Keyword
+
         break
 
       result.value &= cchar
