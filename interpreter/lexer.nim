@@ -55,13 +55,14 @@ proc lexStr(l: var Lexer): Token =
   while not l.atEnd:
     let c = l.peek()
 
-    l.next()
-
     result.value &= c
     pchar = c
 
     if (c == '"') and (pchar != '\\'):
+      l.next()
       break
+
+    l.next()
 
 
 proc lexNum(l: var Lexer): Token =
@@ -76,8 +77,6 @@ proc lexNum(l: var Lexer): Token =
   while not l.atEnd:
     let c = l.peek()
 
-    l.next()
-
     if (dotCount == 1) and (c == '.'):
       break
 
@@ -88,6 +87,8 @@ proc lexNum(l: var Lexer): Token =
       break
 
     result.value &= c
+
+    l.next()
 
   if '.' in result.value:
     result.typ = Float
@@ -112,8 +113,6 @@ proc lexIdent(l: var Lexer): Token =
     while not l.atEnd:
       cchar = l.peek()
 
-      l.next()
-
       if cchar == '`':
         # Don't want to include the backtick in the identifier
         break
@@ -121,16 +120,18 @@ proc lexIdent(l: var Lexer): Token =
       else:
         result.value &= cchar
 
+      l.next()
+
   else:
     while not l.atEnd:
       cchar = l.peek()
-
-      l.next()
 
       if (cchar in Whitespace) or (cchar in Unidentifiers):
         break
 
       result.value &= cchar
+
+      l.next()
 
 
 proc lex*(l: var Lexer): seq[Token] =
