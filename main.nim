@@ -24,8 +24,11 @@ else:
 if code == nil:
   raise OSError.newException("The file could not be opened!")
 
-var l = Lexer.new(code)
+var l = newLexer(code)
 
 let tokens = l.lex()
 
-discard tokens.parse()
+#echo tokens
+
+let p = newParser(tokens)
+discard p.parse()
