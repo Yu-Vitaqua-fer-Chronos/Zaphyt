@@ -4,7 +4,7 @@ import std/[
 ]
 
 import ./[
-  parser,
+#  parser,
   lexer
 ]
 
@@ -28,7 +28,7 @@ var l = newLexer(code)
 
 let tokens = l.lex()
 
-#echo tokens
+echo tokens
 
-let p = newParser(tokens)
-discard p.parse()
+#let p = newParser(tokens)
+#echo p.parse().toTree()

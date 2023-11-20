@@ -9,35 +9,41 @@ type
   ZaphytLexingError* = object of CatchableError
 
   TokenType* = enum
-    OpenParen, CloseParen, OpenBrace, CloseBrace, OpenBracket, CloseBracket
-    Identifier, Keyword, String, Char, Int, Float, Comma, Dot, Colon, Semicolon, EOF
+    OpenParen, CloseParen, OpenBrace, CloseBrace, OpenBracket, CloseBracket, Identifier,
+    Keyword, String, Char, Int, Float, Comma, Path, Colon, Semicolon, Indent, Dedent, EOF
     # Here we have a way to tell the difference between a keyword and identifer to make lexing
     # and parsing less hellish in theory
 
   Token* = object
-    typ*: TokenType
+    case typ*: TokenType
+      of Path:
+        subtokens*: seq[Token]
+      of {Indent, Dedent, EOF}:
+        discard
+      else:
+        value*: string
     startLine*, startColumn*: uint
-    value*: string
+
+  IndentationFormat = enum
+    Unset = 0'u8, Space, Tab
 
   Lexer* = ref object
-    stream*: Stream
-    line*, column*: uint
+    stream: Stream
+    line, column: uint
+    indentFormat: IndentationFormat
+    indentStack: seq[int]
 
 const
   SimpleTokenMap = {
     ',': Comma,
-    '.': Dot,
     ':': Colon,
-    ';': Semicolon
-  }.toTable
-
-  BracketTokenMap = {
+    ';': Semicolon,
     '(': OpenParen,
     ')': CloseParen,
     '[': OpenBracket,
     ']': CloseBracket,
     '{': OpenBrace,
-    '}': CloseBrace,
+    '}': CloseBrace
   }.toTable
 
   SpecialIdentifiers = ['+', '-', '*', '/', '%', '^']
@@ -55,6 +61,43 @@ const
     "discard"
   ]
 
+proc `$`*(token: Token, depth: int = 1): string =
+  let indent = repeat("  ", depth)
+  result &= &"Token(\n{indent}typ: {token.typ},\n"
+  result &= &"{indent}startLine: {token.startLine},\n"
+  result &= &"{indent}startColumn: {token.startColumn},\n"
+
+  case token.typ
+    of Path:
+      result &= &"{indent}subtokens: @[\n"
+
+      for subtoken in token.subtokens:
+        result &= indent & "  " & `$`(subtoken, depth + 2)
+        result.setLen(result.len - 2)
+        result &= &"\n{indent}  ),\n"
+
+      result.setLen(result.len - (indent.len + 6))
+      result &= &"\n{indent}  )\n{indent}]"
+
+    of {Indent, Dedent, EOF}:
+      result.setLen(result.len - 2)
+
+    else:
+      result &= &"{indent}value: "
+      result.addQuoted(token.value)
+
+  result &= "\n)"
+
+proc `$`*(tokens: seq[Token]): string =
+  result = "@[\n"
+  for token in tokens:
+    result &= "  " & `$`(token, 2)
+    result.setLen(result.len - 2)
+    result &= "\n  ),\n"
+
+  result.setLen(result.len - 2)
+
+  result &= "\n]"
 
 template atEnd(l: Lexer): bool = l.stream.atEnd()
 
@@ -71,7 +114,7 @@ proc next(l: Lexer) =
 
 proc newLexer*(stream: Stream): Lexer =
   ## Creates a new lexer from a stream.
-  return Lexer(stream: stream, line: 1, column: 1)
+  return Lexer(stream: stream, line: 1, column: 1, indentFormat: Unset)
 
 proc lexStr(l: Lexer): Token =
   result = Token(typ: String, startLine: l.line, startColumn: l.column)
@@ -166,10 +209,16 @@ proc lexBackticks(l: Lexer): Token =
 
 
 proc lexIdent(l: Lexer): Token =
-  var cchar = l.peek()
+  var
+    cchar = l.peek()
+    lexeme: string
+    tokenType = Identifier
 
-  result = Token(typ: Identifier, startLine: l.line, startColumn: l.column)
-  result.value &= cchar
+  let
+    startLine = l.line
+    startColumn = l.column
+
+  lexeme &= cchar
 
   l.next()
 
@@ -178,39 +227,21 @@ proc lexIdent(l: Lexer): Token =
 
     if (cchar in Whitespace) or (cchar in Unidentifiers):
       if result.value in Keywords:
-        result.typ = Keyword
+        tokenType = Keyword
 
       break
 
-    result.value &= cchar
+    lexeme &= cchar
 
     l.next()
 
-proc lexUntil(l: Lexer, cond: (proc(): bool) = nil): seq[Token] # Forward decl
+  return if tokenType == Identifier:
+    Token(typ: Identifier, startLine: startLine, startColumn: startColumn, value: lexeme)
 
-proc lexBrackets(l: Lexer, b: tuple[open: char, close: char]): seq[Token] =
-  # Used for lexing matching brackets before the parsing stage
-  var cchar = l.peek()
+  else:
+    Token(typ: Keyword, startLine: startLine, startColumn: startColumn, value: lexeme)
 
-  result.add Token(typ: BracketTokenMap[b.open], startLine: l.line,
-    startColumn: l.column, value: $cchar)
-
-  l.next()
-
-  while not l.atEnd:
-    cchar = l.peek()
-
-    if cchar == b.close:
-      result.add Token(typ: BracketTokenMap[b.close], startLine: l.line,
-        startColumn: l.column, value: $cchar)
-      l.next()
-      break
-
-    result.add l.lexUntil(proc(): bool = l.peek() != b.close)
-
-  if cchar != b.close:
-    raise newException(ZaphytLexingError,
-      fmt"Unmatched `{b.open}` at line {l.line} and column {l.column}!")
+proc lexUntil(l: Lexer, cond: (proc(l: Lexer): bool) = nil): seq[Token] # Forward decl
 
 proc lexChar(l: Lexer): Token =
   var
@@ -276,17 +307,122 @@ proc lexChar(l: Lexer): Token =
 
   l.next()
 
-proc lexUntil(l: Lexer, cond: (proc(): bool) = nil): seq[Token] =
+proc lexPath(l: Lexer, prevToken: Token): Token =
+  var
+    cchar = l.peek()
+    pchar: char
+
+  result = Token(typ: Path, startLine: l.line, startColumn: l.column, subtokens: @[prevToken])
+
+  while not l.atEnd:
+    pchar = cchar
+    cchar = l.peek()
+
+    if cchar == '.':
+      l.next()
+      result.subtokens.add l.lexUntil(proc(l: Lexer): bool = l.peek() notin Unidentifiers)
+
+      if l.peek() in {'(', ')', '[', ']', '{', '}'}:
+        break
+
+    else:
+      break
+
+proc lexIndent(l: Lexer): seq[Token] =
+  let
+    startLine = l.line
+    startColumn = l.column
+
+  var
+    cchar: char
+    indentDepth = 0
+
+  while not l.atEnd:
+    cchar = l.peek()
+
+    if cchar in {'\t', ' '}:
+      discard
+
+    elif cchar in Whitespace:
+      return
+
+    else:
+      break
+
+    case l.indentFormat
+      of Unset:
+        if cchar == '\t':
+          l.indentFormat = Tab
+        elif cchar == ' ':
+          l.indentFormat = Space
+        else:
+          raise newException(ZaphytLexingError,
+            fmt"Invalid indentation character at line {l.line} and column {l.column}, got `{cchar}`!")
+
+        indentDepth += 1
+
+      of Tab:
+        if cchar == '\t':
+          indentDepth += 1
+        else:
+          raise newException(ZaphytLexingError,
+            fmt"Invalid indentation character at line {l.line} and column {l.column}, expected a tab but " &
+              fmt"got '{cchar}'!")
+
+      of Space:
+        if cchar == ' ':
+          indentDepth += 1
+        else:
+          raise newException(ZaphytLexingError,
+            fmt"Invalid indentation character at line {l.line} and column {l.column}, expected a space but " &
+              fmt"got '{cchar}'!")
+
+    l.next()
+
+  if l.indentStack.len == 0:
+    l.indentStack.add indentDepth
+    return @[Token(typ: Indent, startLine: startLine, startColumn: startColumn)]
+
+  if indentDepth > l.indentStack[^1]:
+    l.indentStack.add indentDepth
+    return @[Token(typ: Indent, startLine: startLine, startColumn: startColumn)]
+
+  else:
+    if indentDepth != 0:
+      let indexOfMatchingIndent = l.indentStack.find(indentDepth)
+
+      if indexOfMatchingIndent == -1:
+        raise newException(ZaphytLexingError,
+          fmt"Invalid dedentation at line {l.line} and column {l.column}!")
+
+      let toPop = l.indentStack[indexOfMatchingIndent..<l.indentStack.len].len
+
+      for i in 0..<toPop:
+        discard l.indentStack.pop()
+        result.add Token(typ: Dedent, startLine: startLine, startColumn: startColumn)
+
+    else:
+      for i in 0..l.indentStack.len:
+        result.add Token(typ: Dedent, startLine: startLine, startColumn: startColumn)
+
+      l.indentStack.setLen(0)
+
+
+proc lexUntil(l: Lexer, cond: (proc(l: Lexer): bool) = nil): seq[Token] =
   template condition(): bool =
     if cond == nil:
       not l.atEnd
     else:
-      cond() and not l.atEnd
+      cond(l) and not l.atEnd
 
   while condition():
     let cchar = l.peek()
 
-    if cchar in Whitespace:
+    if cchar == '\n':
+      l.next()
+      result.add l.lexIndent()
+
+    elif cchar in Whitespace:
       l.next()
 
     elif cchar == '"':
@@ -301,17 +437,12 @@ proc lexUntil(l: Lexer, cond: (proc(): bool) = nil): seq[Token] =
     elif cchar.isDigit():
       result.add l.lexNum()
 
-    elif cchar == '(':
-      result.add l.lexBrackets((open: '(', close: ')'))
+    elif cchar == '.':
+      if result.len == 0:
+        raise newException(ZaphytLexingError,
+          fmt"Path token found at line {l.line}, column {l.column}, without a token defined before it!")
 
-    elif cchar == '[':
-      result.add l.lexBrackets((open: '[', close: ']'))
-
-    elif cchar == '{':
-      result.add l.lexBrackets((open: '{', close: '}'))
-
-    elif cchar in [')', ']', '}']:
-      return
+      result.add l.lexPath(result.pop())
 
     elif cchar in SimpleTokenMap:
       result.add Token(startLine: l.line, startColumn: l.column, typ: SimpleTokenMap[cchar], value: $cchar)
@@ -341,4 +472,8 @@ proc lexUntil(l: Lexer, cond: (proc(): bool) = nil): seq[Token] =
 
 proc lex*(l: Lexer): seq[Token] =
   result = l.lexUntil()
-  result.add Token(startLine: l.line, startColumn: l.column, typ: EOF, value: "<EOF>")
+
+  for i in 0..<l.indentStack.len:
+    result.add Token(startLine: l.line, startColumn: l.column, typ: Dedent)
+
+  result.add Token(startLine: l.line, startColumn: l.column, typ: EOF)
