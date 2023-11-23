@@ -46,9 +46,9 @@ const
     '}': CloseBrace
   }.toTable
 
-  SpecialIdentifiers = ['+', '-', '*', '/', '%', '^']
+  SpecialIdentifiers = ['+', '-', '*', '/', '&', '%', '^']
 
-  Unidentifiers = ".,:+-*/()[]{}\"'"
+  Unidentifiers = ".,:+-*/&()[]{}\"'"
 
   Keywords = @[
     "func",
@@ -118,12 +118,11 @@ proc newLexer*(stream: Stream): Lexer =
 
 proc lexStr(l: Lexer): Token =
   result = Token(typ: String, startLine: l.line, startColumn: l.column)
+  var lexeme: string
+
   var
     cchar = l.peek()
     pchar: char
-
-  if cchar == '"':
-    result.value &= cchar
 
   l.next()
 
@@ -135,13 +134,15 @@ proc lexStr(l: Lexer): Token =
       raise newException(ZaphytLexingError,
         fmt"Unterminated string literal at line {l.line} and column {l.column}!")
 
-    result.value &= cchar
-
     if (cchar == '"') and (pchar != '\\'):
       l.next()
       break
 
+    result.value &= cchar
+
     l.next()
+
+  result.value = lexeme
 
   if (cchar != '"') or (cchar == '"' and pchar == '\\'):
     raise newException(ZaphytLexingError,
@@ -178,11 +179,11 @@ proc lexNum(l: Lexer): Token =
 
 
 proc lexBackticks(l: Lexer): Token =
+  result = Token(typ: Identifier, startLine: l.line, startColumn: l.column)
+
   var
     cchar = l.peek()
     pchar: char
-
-  result = Token(typ: Identifier, startLine: l.line, startColumn: l.column)
 
   l.next()
 
@@ -192,20 +193,20 @@ proc lexBackticks(l: Lexer): Token =
 
     if cchar == '\n':
       raise newException(ZaphytLexingError,
-        fmt"Unterminated backtick at line {l.line} and column {l.column}!")
+        fmt"Unterminated backtick literal at line {l.line} and column {l.column}!")
 
-    elif cchar == '`':
+    elif cchar != '`':
+      result.value &= cchar
+
+    elif (cchar == '`') and (pchar != '\\'):
       l.next()
       break
 
-    else:
-      result.value &= cchar
-
     l.next()
 
-  if cchar != '`':
+  if (cchar != '`') or (cchar == '`' and pchar == '\\'):
     raise newException(ZaphytLexingError,
-      fmt"Unterminated backtick at line {l.line} and column {l.column}, reached EOF!")
+      fmt"Unterminated backtick literal at line {l.line} and column {l.column}, reached EOF!")
 
 
 proc lexIdent(l: Lexer): Token =
@@ -248,7 +249,7 @@ proc lexChar(l: Lexer): Token =
     cchar = l.peek()
     pchar: char
 
-  result = Token(typ: Char, startLine: l.line, startColumn: l.column, value: $cchar)
+  result = Token(typ: Char, startLine: l.line, startColumn: l.column)
 
   l.next()
 
@@ -277,7 +278,7 @@ proc lexChar(l: Lexer): Token =
             fmt"Unterminated character literal at line {l.line} and column {l.column}!")
 
         else:
-          result.value &= cchar
+          result.value.addQuoted(cchar)
 
           l.next()
 
@@ -302,9 +303,6 @@ proc lexChar(l: Lexer): Token =
       raise newException(ZaphytLexingError,
         fmt"Unterminated character literal at line {l.line} and column {l.column}!")
 
-    else:
-      result.value &= cchar
-
   l.next()
 
 proc lexPath(l: Lexer, prevToken: Token): Token =
@@ -322,7 +320,8 @@ proc lexPath(l: Lexer, prevToken: Token): Token =
       l.next()
       result.subtokens.add l.lexUntil(proc(l: Lexer): bool = l.peek() notin Unidentifiers)
 
-      if l.peek() in {'(', ')', '[', ']', '{', '}'}:
+      var ccchar = l.peek()
+      if (ccchar in {'(', ')', '[', ']', '{', '}'}) or (ccchar in SpecialIdentifiers):
         break
 
     else:
