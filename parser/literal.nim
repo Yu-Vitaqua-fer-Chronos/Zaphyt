@@ -45,8 +45,6 @@ func primary*(p: Parser): Expression =
         fmt"and column {p.previous.startColumn}!")
     return e
 
-  elif p.match({TokenType.Identifier}):
-    
 
 func unary*(p: Parser): Expression =
   if p.peek.value in ["not", "-"]:
