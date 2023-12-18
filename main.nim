@@ -8,6 +8,10 @@ import ./[
   lexer
 ]
 
+import ./parser/[
+  prettyprint
+]
+
 let fileName = paramStr(1)
 
 var code: Stream
@@ -31,4 +35,7 @@ let tokens = l.lex()
 #echo tokens
 
 let p = newParser(tokens)
-echo p.parse().toTree()
+var pretty = AstPrinter()
+var ast = p.parse()
+echo ast == nil
+echo pretty.visit(ast)
